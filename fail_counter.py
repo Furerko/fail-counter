@@ -1,4 +1,5 @@
 import sys
+import os
 from collections import Counter
 
 FAIL_PATTERNS = {
@@ -49,7 +50,7 @@ def main():
                 if key in line:
                     counter[label] += 1
 
-    # --- SORTOWANIE ---
+    # --- SORTOWANIE I TOP 5 ---
     sorted_fails = counter.most_common()
     top5 = sorted_fails[:5]
 
@@ -68,14 +69,17 @@ def main():
     print(f"{'SUMA FAIL':<100} {total:>6}")
     print("=" * 120)
 
-    # --- ZAPIS TOP 5 DO JEDNEJ LINII TXT ---
-    with open("top5_fail.txt", "w", encoding="utf-8") as f:
-        line_parts = []
-        for label, count in top5:
-            line_parts.append(f"{label} {count}")
-        f.write(", ".join(line_parts) + ".")
+    # --- ŚCIEŻKA WYJŚCIA: TAM GDZIE CSV ---
+    output_path = os.path.join(os.path.dirname(csv_file), "top5_fail.txt")
 
-    print("\nZapisano plik: top5_fail.txt")
+    # --- ZAPIS TOP 5 DO JEDNEJ LINII ---
+    with open(output_path, "w", encoding="utf-8") as f:
+        parts = []
+        for label, count in top5:
+            parts.append(f"{label} {count}")
+        f.write(", ".join(parts) + ".")
+
+    print(f"\nZapisano plik:\n{output_path}")
     input("ENTER aby zamknac...")
 
 if __name__ == "__main__":
