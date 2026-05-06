@@ -1,6 +1,7 @@
 import sys
 import os
 from collections import Counter
+from datetime import datetime
 
 FAIL_PATTERNS = {
     "FAIL ALIGN - (063) Align Focus Conversion Failed.  Unable to align lens within maximum number of attempts.": 
@@ -50,11 +51,11 @@ def main():
                 if key in line:
                     counter[label] += 1
 
-    # --- SORTOWANIE I TOP 5 ---
+    # --- SORTOWANIE ---
     sorted_fails = counter.most_common()
     top5 = sorted_fails[:5]
 
-    # --- WYŚWIETLANIE WSZYSTKICH FAIL ---
+    # --- WYŚWIETLANIE ---
     print("\nPLIK:", csv_file)
     print("=" * 120)
     print(f"{'TYPE':<6} | {'FAIL DESCRIPTION':<90} | {'COUNT':>6}")
@@ -69,17 +70,22 @@ def main():
     print(f"{'SUMA FAIL':<100} {total:>6}")
     print("=" * 120)
 
-    # --- ŚCIEŻKA WYJŚCIA: TAM GDZIE CSV ---
-    output_path = os.path.join(os.path.dirname(csv_file), "top5_fail.txt")
+    # --- ŚCIEŻKA: TAM GDZIE .EXE ---
+    exe_dir = os.path.dirname(sys.executable)
 
-    # --- ZAPIS TOP 5 DO JEDNEJ LINII ---
-    with open(output_path, "w", encoding="utf-8") as f:
+    # --- DATA ---
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    output_file = os.path.join(exe_dir, f"top5_fail_{today}.txt")
+
+    # --- ZAPIS JEDNEJ LINII ---
+    with open(output_file, "w", encoding="utf-8") as f:
         parts = []
         for label, count in top5:
             parts.append(f"{label} {count}")
         f.write(", ".join(parts) + ".")
 
-    print(f"\nZapisano plik:\n{output_path}")
+    print(f"\nZapisano plik:\n{output_file}")
     input("ENTER aby zamknac...")
 
 if __name__ == "__main__":
