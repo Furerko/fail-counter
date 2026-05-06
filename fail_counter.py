@@ -2,7 +2,6 @@ import sys
 from collections import Counter
 
 FAIL_PATTERNS = {
-
     "FAIL ALIGN - (063) Align Focus Conversion Failed.  Unable to align lens within maximum number of attempts.": 
         "FAIL ALIGN (063) - Align Focus Conversion failed",
 
@@ -49,21 +48,20 @@ def main():
                 if key in line:
                     counter[label] += 1
 
-print("\nPLIK:", csv_file)
-print("=" * 110)
+    print("\nPLIK:", csv_file)
+    print("=" * 110)
+    print(f"{'TYPE':<6} | {'FAIL DESCRIPTION':<80} | {'COUNT':>6}")
+    print("-" * 110)
 
-print(f"{'TYPE':<6} | {'FAIL DESCRIPTION':<80} | {'COUNT':>6}")
-print("-" * 110)
+    total = 0
+    for label, count in counter.items():
+        print(f"{'CMAT':<6} | {label:<80} | {count:>6}")
+        total += count
 
-total = 0
-for label, count in counter.items():
-    print(f"{'CMAT':<6} | {label:<80} | {count:>6}")
-    total += count
-
-print("-" * 110)
-print(f"{'SUMA FAIL':<90} {total:>6}")
-print("=" * 110)
-input("ENTER aby zamknac...")
+    print("-" * 110)
+    print(f"{'SUMA FAIL':<90} {total:>6}")
+    print("=" * 110)
+    input("ENTER aby zamknac...")
 
 if __name__ == "__main__":
     main()
