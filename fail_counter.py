@@ -3,16 +3,16 @@ from collections import Counter
 
 FAIL_PATTERNS = {
     
-    "FAIL ALIGN - (063) Align Focus Conversion Failed.  Unable to align lens within maximum number of attempts.": "FAIL ALIGN (063) - Align Focus Conversion",
-    "FAIL ALIGN - (205) Failed to compute final Z position": "FAIL ALIGN (205) - Final Z position",
-    "FAIL ALIGN - Final Image Test Failed.  MTF (Could not find the required geometry in the ROI.)": "FAIL ALIGN - MTF ROI",
-    "FAIL ALIGN - Final Image Test Failed.  MTF.": "FAIL ALIGN - MTF",
-    "FAIL DISPENSE - (112) Unable to Detect Camera Housing": "FAIL DISPENSE (112) - Camera Housing",
-    "FAIL DISPENSE - (128) Unable to Verify Epoxy Bead": "FAIL DISPENSE (128) - Epoxy Bead",
-    "Open Camera ExDone on Align call failed - -2094": "CAMERA ALIGN -2094 Frame error",
-    "Open Camera ExDone on Align call failed - -2107": "CAMERA ALIGN -2107 Comm error",
-    "Open Camera ExDone on Dispense call failed - -2094": "CAMERA DISPENSE -2094 Frame error",
-    "Open Camera ExDone on Dispense call failed - -2107": "CAMERA DISPENSE -2107 Comm error",
+    "FAIL ALIGN - (063) Align Focus Conversion Failed.  Unable to align lens within maximum number of attempts.": " CMAT | FAIL ALIGN (063) - Align Focus Conversion failed",
+    "FAIL ALIGN - (205) Failed to compute final Z position": "CMAT | FAIL ALIGN (205) - Failed to compute final Z position",
+    "FAIL ALIGN - Final Image Test Failed.  MTF (Could not find the required geometry in the ROI.)": "CMAT | FAIL ALIGN - MTF (Could not find the required geometry in the ROI.)",
+    "FAIL ALIGN - Final Image Test Failed.  MTF.": "CMAT | FAIL ALIGN - MTF",
+    "FAIL DISPENSE - (112) Unable to Detect Camera Housing": "CMAT | FAIL DISPENSE (112) - Unable to Detect Camera Housing.  The dispense position could not be determined",
+    "FAIL DISPENSE - (128) Unable to Verify Epoxy Bead": "CMAT | FAIL DISPENSE (128) - The dispense bead failed the validation criteria",
+    "Open Camera ExDone on Align call failed - -2094": "CMAT | CAMERA ALIGN -2094 Camera electronics driver: frame error",
+    "Open Camera ExDone on Align call failed - -2107": "CMAT | CAMERA ALIGN -2107 Camera electronics driver: camera communication error",
+    "Open Camera ExDone on Dispense call failed - -2094": "CMAT | CAMERA DISPENSE -2094 Camera electronics driver: frame error",
+    "Open Camera ExDone on Dispense call failed - -2107": "CMAT | CAMERA DISPENSE -2107 Camera electronics driver: camera communication error",
 }
 
 def main():
