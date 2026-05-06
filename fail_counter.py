@@ -49,7 +49,7 @@ def main():
                 if key in line:
                     counter[label] += 1
 
-    # --- SORTOWANIE I TOP 5 ---
+    # --- SORTOWANIE ---
     sorted_fails = counter.most_common()
     top5 = sorted_fails[:5]
 
@@ -68,18 +68,12 @@ def main():
     print(f"{'SUMA FAIL':<100} {total:>6}")
     print("=" * 120)
 
-    # --- ZAPIS TOP 5 DO NOTATNIKA ---
+    # --- ZAPIS TOP 5 DO JEDNEJ LINII TXT ---
     with open("top5_fail.txt", "w", encoding="utf-8") as f:
-        f.write("TOP 5 FAIL\n")
-        f.write("PLIK: " + csv_file + "\n")
-        f.write("=" * 100 + "\n\n")
-
-        for i, (label, count) in enumerate(top5, start=1):
-            code = label.split("(")[1].split(")")[0] if "(" in label and ")" in label else "----"
-            f.write(f"{i}. [{code:4}] {label:<75} {count:>5}\n")
-
-        f.write("\n" + "=" * 100 + "\n")
-        f.write(f"SUMA TOP 5: {sum(c for _, c in top5)}\n")
+        line_parts = []
+        for label, count in top5:
+            line_parts.append(f"{label} {count}")
+        f.write(", ".join(line_parts) + ".")
 
     print("\nZapisano plik: top5_fail.txt")
     input("ENTER aby zamknac...")
