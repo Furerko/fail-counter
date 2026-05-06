@@ -3,7 +3,7 @@ from collections import Counter
 
 FAIL_PATTERNS = {
     
-    "FAIL ALIGN - (063) Align Focus Conversion Failed.  Unable to align lens within maximum number of attempts.": " CMAT | FAIL ALIGN (063) - Align Focus Conversion failed",
+    "FAIL ALIGN - (063) Align Focus Conversion Failed.  Unable to align lens within maximum number of attempts.": "CMAT | FAIL ALIGN (063) - Align Focus Conversion failed",
     "FAIL ALIGN - (205) Failed to compute final Z position": "CMAT | FAIL ALIGN (205) - Failed to compute final Z position",
     "FAIL ALIGN - Final Image Test Failed.  MTF (Could not find the required geometry in the ROI.)": "CMAT | FAIL ALIGN - MTF (Could not find the required geometry in the ROI.)",
     "FAIL ALIGN - Final Image Test Failed.  MTF.": "CMAT | FAIL ALIGN - MTF",
