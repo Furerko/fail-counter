@@ -2,7 +2,7 @@ import sys
 from collections import Counter
 
 FAIL_PATTERNS = {
-    "FAIL ALIGN - (063) Align Focus Conversion Failed.  Unable to align lens within maximum number of attempts."
+    "FAIL ALIGN - (063) Align Focus Conversion Failed.  Unable to align lens within maximum number of attempts.",
     "FAIL ALIGN - (205) Failed to compute final Z position": "FAIL ALIGN (205) - Final Z position",
     "FAIL ALIGN - Final Image Test Failed.  MTF (Could not find the required geometry in the ROI.)": "FAIL ALIGN - MTF ROI",
     "FAIL ALIGN - Final Image Test Failed.  MTF.": "FAIL ALIGN - MTF",
