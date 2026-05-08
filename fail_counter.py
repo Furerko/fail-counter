@@ -98,6 +98,97 @@ def find_pallet_id_from_row(row):
     return "UNKNOWN"
 
 
+def parse_datetime_from_text(text):
+    if not text:
+        return None
+
+    text = str(text).strip()
+
+    date_formats = [
+        "%m/%d/%Y, %I:%M:%S %p",
+        "%m/%d/%Y %I:%M:%S %p",
+        "%m/%d/%Y, %H:%M:%S",
+        "%m/%d/%Y %H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%d.%m.%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M:%S",
+    ]
+
+    for fmt in date_formats:
+        try:
+            return datetime.strptime(text, fmt)
+        except Exception:
+            pass
+
+    regex_patterns = [
+        r"\d{1,2}/\d{1,2}/\d{4},?\s+\d{1,2}:\d{2}:\d{2}\s*(AM|PM)",
+        r"\d{1,2}/\d{1,2}/\d{4},?\s+\d{1,2}:\d{2}:\d{2}",
+        r"\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}:\d{2}",
+        r"\d{2}\.\d{2}\.\d{4}\s+\d{1,2}:\d{2}:\d{2}",
+    ]
+
+    for pattern in regex_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            found = match.group(0).strip()
+            found = re.sub(r"\s+", " ", found)
+
+            for fmt in date_formats:
+                try:
+                    return datetime.strptime(found, fmt)
+                except Exception:
+                    pass
+
+    return None
+
+
+def find_datetime_from_row(row):
+    preferred_headers = [
+        "DATE TIME",
+        "DATETIME",
+        "TIMESTAMP",
+        "TIME STAMP",
+        "START TIME",
+        "END TIME",
+        "PROCESS TIME",
+        "DATE",
+    ]
+
+    for key, value in row.items():
+        normalized = normalize_header(key)
+        if normalized in preferred_headers:
+            dt = parse_datetime_from_text(value)
+            if dt:
+                return dt
+
+    date_value = None
+    time_value = None
+
+    for key, value in row.items():
+        normalized = normalize_header(key)
+
+        if normalized == "DATE" and value:
+            date_value = str(value).strip()
+
+        if normalized == "TIME" and value:
+            time_value = str(value).strip()
+
+    if date_value and time_value:
+        dt = parse_datetime_from_text(date_value + " " + time_value)
+        if dt:
+            return dt
+
+    row_text = " ".join(str(v) for v in row.values() if v is not None)
+    return parse_datetime_from_text(row_text)
+
+
+def get_hour_bucket(dt):
+    if dt is None:
+        return "UNKNOWN_TIME"
+
+    return dt.strftime("%Y-%m-%d %H:00")
+
+
 def detect_dialect(file_path):
     try:
         with open(file_path, "r", encoding="utf-8", errors="ignore", newline="") as f:
@@ -108,7 +199,13 @@ def detect_dialect(file_path):
         return csv.excel
 
 
-def analyze_csv_file(file_path, grouped_counter, pallet_counter):
+def analyze_csv_file(
+    file_path,
+    grouped_counter,
+    pallet_counter,
+    trend_counter,
+    hot_pallet_counter
+):
     dialect = detect_dialect(file_path)
 
     with open(file_path, "r", encoding="utf-8", errors="ignore", newline="") as f:
@@ -120,23 +217,31 @@ def analyze_csv_file(file_path, grouped_counter, pallet_counter):
             for line in f:
                 setup_tag = "UNKNOWN_SETUP_TAG"
                 pallet_short = "UNKNOWN"
+                hour_bucket = "UNKNOWN_TIME"
 
                 for key, label in FAIL_PATTERNS.items():
                     if key in line:
                         grouped_counter[setup_tag][label] += 1
                         pallet_counter[setup_tag][label][pallet_short] += 1
+                        trend_counter[setup_tag][hour_bucket] += 1
+                        hot_pallet_counter[setup_tag][pallet_short][label] += 1
 
             return
 
         for row in reader:
             setup_tag = find_setup_tag_from_row(row)
             pallet_short = find_pallet_id_from_row(row)
+            dt = find_datetime_from_row(row)
+            hour_bucket = get_hour_bucket(dt)
+
             row_text = " ".join(str(v) for v in row.values() if v is not None)
 
             for key, label in FAIL_PATTERNS.items():
                 if key in row_text:
                     grouped_counter[setup_tag][label] += 1
                     pallet_counter[setup_tag][label][pallet_short] += 1
+                    trend_counter[setup_tag][hour_bucket] += 1
+                    hot_pallet_counter[setup_tag][pallet_short][label] += 1
 
 
 def get_pallets_above_5_with_count(pallet_counter_for_fail):
@@ -155,6 +260,21 @@ def get_pallets_above_5_with_count(pallet_counter_for_fail):
     return sorted(pallets, key=sort_key)
 
 
+def get_hot_pallets(hot_pallet_counter_for_setup):
+    hot_pallets = []
+
+    for pallet_short, fail_counter in hot_pallet_counter_for_setup.items():
+        if pallet_short == "UNKNOWN":
+            continue
+
+        total = sum(fail_counter.values())
+
+        if total > 5:
+            hot_pallets.append((pallet_short, total, fail_counter))
+
+    return sorted(hot_pallets, key=lambda x: (-x[1], x[0]))
+
+
 def format_fail_with_pallets(label, count, pallets_above_5):
     if pallets_above_5:
         pallets_text = ", ".join([f"{pallet}({qty})" for pallet, qty in pallets_above_5])
@@ -165,11 +285,12 @@ def format_fail_with_pallets(label, count, pallets_above_5):
 
 def write_report(output_file, grouped_counter, pallet_counter, input_files):
     """
-    UWAGA:
-    Ten raport TXT jest skrocony.
-    Zawiera tylko TOP 5 FAIL dla kazdego SETUP TAG.
-    FAILe sa rozpisane po przecinku.
-    Przy failach sa paletki >5 FAIL, jesli wystepuja.
+    TXT zostaje skrocony:
+    - TOP 5 FAIL dla kazdego SETUP TAG
+    - po przecinku
+    - z paletkami >5 przy danym FAIL
+    Trend i Hot Pallet NIE sa zapisywane do TXT.
+    Sa tylko w programie .exe / konsoli.
     """
 
     with open(output_file, "w", encoding="utf-8") as f:
@@ -217,15 +338,21 @@ def write_report(output_file, grouped_counter, pallet_counter, input_files):
         f.write("=" * 120 + "\n")
 
 
-def print_console_summary(grouped_counter, pallet_counter):
+def print_console_summary(
+    grouped_counter,
+    pallet_counter,
+    trend_counter,
+    hot_pallet_counter
+):
     """
-    To zostaje jak w programie .exe:
-    pelny widok wszystkich FAIL w konsoli.
-    Nie skracamy konsoli do TOP 5.
+    Program .exe / konsola:
+    - wszystkie FAILe
+    - trend po godzinie
+    - hot pallet
     """
 
     print("\nWYNIK ANALIZY - WSZYSTKIE FAIL WG SETUP TAG")
-    print("=" * 150)
+    print("=" * 160)
 
     grand_total = 0
 
@@ -235,9 +362,9 @@ def print_console_summary(grouped_counter, pallet_counter):
         grand_total += setup_total
 
         print(f"\nSETUP TAG: {setup_tag}")
-        print("-" * 150)
-        print(f"{'FAIL DESCRIPTION':<100} | {'COUNT':>6} | {'PALETKI >5 FAIL':<30}")
-        print("-" * 150)
+        print("-" * 160)
+        print(f"{'FAIL DESCRIPTION':<100} | {'COUNT':>6} | {'PALETKI >5 FAIL':<35}")
+        print("-" * 160)
 
         for label, count in sorted_fails:
             pallets_above_5 = get_pallets_above_5_with_count(
@@ -249,15 +376,37 @@ def print_console_summary(grouped_counter, pallet_counter):
             else:
                 pallets_text = ""
 
-            print(f"{label:<100} | {count:>6} | {pallets_text:<30}")
+            print(f"{label:<100} | {count:>6} | {pallets_text:<35}")
 
-        print("-" * 150)
+        print("-" * 160)
         print(f"{'SUMA FAIL DLA SETUP TAG':<100} | {setup_total:>6}")
-        print("-" * 150)
+        print("-" * 160)
 
-    print("=" * 150)
-    print(f"{'SUMA WSZYSTKICH FAIL':<100} | {grand_total:>6}")
-    print("=" * 150)
+        print("\nTREND FAIL WG GODZINY:")
+        if trend_counter[setup_tag]:
+            for hour_bucket, count in sorted(trend_counter[setup_tag].items()):
+                print(f"{hour_bucket} -> {count}")
+        else:
+            print("BRAK DANYCH CZASOWYCH.")
+
+        print("\nHOT PALLETS:")
+        hot_pallets = get_hot_pallets(hot_pallet_counter[setup_tag])
+
+        if hot_pallets:
+            for pallet_short, total, fail_counter in hot_pallets:
+                fail_parts = [
+                    f"{label} {count}"
+                    for label, count in fail_counter.most_common()
+                ]
+
+                print(f"{pallet_short} -> {total} FAIL | " + ", ".join(fail_parts))
+        else:
+            print("BRAK PALETEK >5 FAIL.")
+
+        print("=" * 160)
+
+    print(f"\n{'SUMA WSZYSTKICH FAIL':<100} | {grand_total:>6}")
+    print("=" * 160)
 
 
 def main():
@@ -280,23 +429,37 @@ def main():
 
     grouped_counter = defaultdict(Counter)
     pallet_counter = defaultdict(lambda: defaultdict(Counter))
+    trend_counter = defaultdict(Counter)
+    hot_pallet_counter = defaultdict(lambda: defaultdict(Counter))
 
     print("Analizowane pliki:")
     for file_path in csv_files:
         print("-", file_path)
-        analyze_csv_file(file_path, grouped_counter, pallet_counter)
 
-    # Konsola / program .exe zostaje pelny, nie tylko TOP 5
-    print_console_summary(grouped_counter, pallet_counter)
+        analyze_csv_file(
+            file_path,
+            grouped_counter,
+            pallet_counter,
+            trend_counter,
+            hot_pallet_counter
+        )
+
+    # To jest widoczne tylko w programie .exe / konsoli
+    print_console_summary(
+        grouped_counter,
+        pallet_counter,
+        trend_counter,
+        hot_pallet_counter
+    )
 
     exe_dir = get_exe_folder()
     timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
     output_file = os.path.join(exe_dir, f"fail_report__{timestamp}.txt")
 
-    # Tylko plik TXT jest skrocony do TOP 5 po przecinku
+    # TXT zostaje skrocony - bez trendu i hot pallet
     write_report(output_file, grouped_counter, pallet_counter, csv_files)
 
-    print("\nZapisano raport:")
+    print("\nZapisano raport TXT:")
     print(output_file)
 
     input("\nENTER aby zamknac...")
