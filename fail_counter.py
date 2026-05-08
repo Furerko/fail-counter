@@ -3,7 +3,7 @@ import os
 import csv
 import re
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 
 FAIL_PATTERNS = {
     "FAIL ALIGN - (063) Align Focus Conversion Failed.  Unable to align lens within maximum number of attempts.":
@@ -189,6 +189,31 @@ def get_hour_bucket(dt):
     return dt.strftime("%Y-%m-%d %H:00")
 
 
+def format_hour_range(hour_bucket):
+    """
+    Zamienia:
+    2026-05-06 06:00
+
+    na:
+    2026-05-06 od 06:00 do 06:59
+    """
+
+    if hour_bucket == "UNKNOWN_TIME":
+        return "UNKNOWN_TIME"
+
+    try:
+        start_dt = datetime.strptime(hour_bucket, "%Y-%m-%d %H:00")
+        end_dt = start_dt + timedelta(minutes=59)
+
+        return (
+            f"{start_dt.strftime('%Y-%m-%d')} "
+            f"od {start_dt.strftime('%H:%M')} "
+            f"do {end_dt.strftime('%H:%M')}"
+        )
+    except Exception:
+        return hour_bucket
+
+
 def detect_dialect(file_path):
     try:
         with open(file_path, "r", encoding="utf-8", errors="ignore", newline="") as f:
@@ -204,6 +229,7 @@ def analyze_csv_file(
     grouped_counter,
     pallet_counter,
     trend_counter,
+    trend_pallet_counter,
     hot_pallet_counter
 ):
     dialect = detect_dialect(file_path)
@@ -224,6 +250,7 @@ def analyze_csv_file(
                         grouped_counter[setup_tag][label] += 1
                         pallet_counter[setup_tag][label][pallet_short] += 1
                         trend_counter[setup_tag][hour_bucket] += 1
+                        trend_pallet_counter[setup_tag][hour_bucket][pallet_short] += 1
                         hot_pallet_counter[setup_tag][pallet_short][label] += 1
 
             return
@@ -241,6 +268,7 @@ def analyze_csv_file(
                     grouped_counter[setup_tag][label] += 1
                     pallet_counter[setup_tag][label][pallet_short] += 1
                     trend_counter[setup_tag][hour_bucket] += 1
+                    trend_pallet_counter[setup_tag][hour_bucket][pallet_short] += 1
                     hot_pallet_counter[setup_tag][pallet_short][label] += 1
 
 
@@ -261,12 +289,6 @@ def get_pallets_above_5_with_count(pallet_counter_for_fail):
 
 
 def get_hot_pallets_top5(hot_pallet_counter_for_setup):
-    """
-    Zwraca TOP 5 hot pallets dla danego SETUP TAG.
-    Hot pallet = paletka z laczna iloscia FAIL > 5.
-    Sortowanie: od najwiekszej ilosci FAIL.
-    """
-
     hot_pallets = []
 
     for pallet_short, fail_counter in hot_pallet_counter_for_setup.items():
@@ -284,7 +306,7 @@ def get_hot_pallets_top5(hot_pallet_counter_for_setup):
 def get_trend_top5_hours(trend_counter_for_setup):
     """
     Zwraca TOP 5 godzin z najwieksza iloscia FAIL.
-    UNKNOWN_TIME idzie na koniec, jezeli wystepuje.
+    UNKNOWN_TIME idzie na koniec.
     """
 
     items = list(trend_counter_for_setup.items())
@@ -295,6 +317,21 @@ def get_trend_top5_hours(trend_counter_for_setup):
         return (-count, unknown_flag, hour_bucket)
 
     return sorted(items, key=sort_key)[:5]
+
+
+def get_top_pallets_for_hour(trend_pallet_counter_for_hour):
+    """
+    Zwraca paletki i ilosci FAIL dla danej godziny.
+    Pokazuje maksymalnie TOP 5 paletek w tej godzinie.
+    """
+
+    pallets = []
+
+    for pallet_short, count in trend_pallet_counter_for_hour.items():
+        if pallet_short != "UNKNOWN":
+            pallets.append((pallet_short, count))
+
+    return sorted(pallets, key=lambda x: (-x[1], x[0]))[:5]
 
 
 def format_fail_with_pallets(label, count, pallets_above_5):
@@ -311,6 +348,7 @@ def write_report(output_file, grouped_counter, pallet_counter, input_files):
     - TOP 5 FAIL dla kazdego SETUP TAG
     - po przecinku
     - z paletkami >5 przy danym FAIL
+
     Trend i Hot Pallet NIE sa zapisywane do TXT.
     Sa tylko w programie .exe / konsoli.
     """
@@ -364,17 +402,19 @@ def print_console_summary(
     grouped_counter,
     pallet_counter,
     trend_counter,
+    trend_pallet_counter,
     hot_pallet_counter
 ):
     """
     Program .exe / konsola:
     - wszystkie FAILe
     - TOP 5 godzin trendu
+    - dla kazdej godziny: od-do, paletki i ilosci
     - TOP 5 hot pallets
     """
 
     print("\nWYNIK ANALIZY - WSZYSTKIE FAIL WG SETUP TAG")
-    print("=" * 160)
+    print("=" * 170)
 
     grand_total = 0
 
@@ -384,9 +424,9 @@ def print_console_summary(
         grand_total += setup_total
 
         print(f"\nSETUP TAG: {setup_tag}")
-        print("-" * 160)
-        print(f"{'FAIL DESCRIPTION':<100} | {'COUNT':>6} | {'PALETKI >5 FAIL':<35}")
-        print("-" * 160)
+        print("-" * 170)
+        print(f"{'FAIL DESCRIPTION':<100} | {'COUNT':>6} | {'PALETKI >5 FAIL':<40}")
+        print("-" * 170)
 
         for label, count in sorted_fails:
             pallets_above_5 = get_pallets_above_5_with_count(
@@ -398,19 +438,32 @@ def print_console_summary(
             else:
                 pallets_text = ""
 
-            print(f"{label:<100} | {count:>6} | {pallets_text:<35}")
+            print(f"{label:<100} | {count:>6} | {pallets_text:<40}")
 
-        print("-" * 160)
+        print("-" * 170)
         print(f"{'SUMA FAIL DLA SETUP TAG':<100} | {setup_total:>6}")
-        print("-" * 160)
+        print("-" * 170)
 
-        # TYLKO TOP 5 GODZIN
+        # TYLKO TOP 5 GODZIN + zakres od-do + paletki i ilosci
         print("\nTREND FAIL WG GODZINY - TOP 5:")
         trend_top5 = get_trend_top5_hours(trend_counter[setup_tag])
 
         if trend_top5:
             for hour_bucket, count in trend_top5:
-                print(f"{hour_bucket} -> {count}")
+                hour_range = format_hour_range(hour_bucket)
+
+                top_pallets_for_hour = get_top_pallets_for_hour(
+                    trend_pallet_counter[setup_tag][hour_bucket]
+                )
+
+                if top_pallets_for_hour:
+                    pallets_text = ", ".join(
+                        [f"{pallet}({qty})" for pallet, qty in top_pallets_for_hour]
+                    )
+                else:
+                    pallets_text = "BRAK PALETKI"
+
+                print(f"{hour_range} -> {count} FAIL | PALETKI: {pallets_text}")
         else:
             print("BRAK DANYCH CZASOWYCH.")
 
@@ -429,10 +482,10 @@ def print_console_summary(
         else:
             print("BRAK PALETEK >5 FAIL.")
 
-        print("=" * 160)
+        print("=" * 170)
 
     print(f"\n{'SUMA WSZYSTKICH FAIL':<100} | {grand_total:>6}")
-    print("=" * 160)
+    print("=" * 170)
 
 
 def main():
@@ -456,6 +509,7 @@ def main():
     grouped_counter = defaultdict(Counter)
     pallet_counter = defaultdict(lambda: defaultdict(Counter))
     trend_counter = defaultdict(Counter)
+    trend_pallet_counter = defaultdict(lambda: defaultdict(Counter))
     hot_pallet_counter = defaultdict(lambda: defaultdict(Counter))
 
     print("Analizowane pliki:")
@@ -467,6 +521,7 @@ def main():
             grouped_counter,
             pallet_counter,
             trend_counter,
+            trend_pallet_counter,
             hot_pallet_counter
         )
 
@@ -475,6 +530,7 @@ def main():
         grouped_counter,
         pallet_counter,
         trend_counter,
+        trend_pallet_counter,
         hot_pallet_counter
     )
 
