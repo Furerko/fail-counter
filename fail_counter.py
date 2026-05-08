@@ -164,6 +164,14 @@ def format_fail_with_pallets(label, count, pallets_above_5):
 
 
 def write_report(output_file, grouped_counter, pallet_counter, input_files):
+    """
+    UWAGA:
+    Ten raport TXT jest skrocony.
+    Zawiera tylko TOP 5 FAIL dla kazdego SETUP TAG.
+    FAILe sa rozpisane po przecinku.
+    Przy failach sa paletki >5 FAIL, jesli wystepuja.
+    """
+
     with open(output_file, "w", encoding="utf-8") as f:
         f.write("FAIL REPORT - TOP 5 WG SETUP TAG\n")
         f.write(f"DATA: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -210,36 +218,46 @@ def write_report(output_file, grouped_counter, pallet_counter, input_files):
 
 
 def print_console_summary(grouped_counter, pallet_counter):
-    print("\nWYNIK ANALIZY - TOP 5 WG SETUP TAG")
-    print("=" * 140)
+    """
+    To zostaje jak w programie .exe:
+    pelny widok wszystkich FAIL w konsoli.
+    Nie skracamy konsoli do TOP 5.
+    """
+
+    print("\nWYNIK ANALIZY - WSZYSTKIE FAIL WG SETUP TAG")
+    print("=" * 150)
 
     grand_total = 0
 
     for setup_tag, counter in grouped_counter.items():
         sorted_fails = counter.most_common()
-        top5 = sorted_fails[:5]
         setup_total = sum(counter.values())
         grand_total += setup_total
 
         print(f"\nSETUP TAG: {setup_tag}")
-        print("-" * 140)
+        print("-" * 150)
+        print(f"{'FAIL DESCRIPTION':<100} | {'COUNT':>6} | {'PALETKI >5 FAIL':<30}")
+        print("-" * 150)
 
-        if top5:
-            for label, count in top5:
-                pallets_above_5 = get_pallets_above_5_with_count(
-                    pallet_counter[setup_tag][label]
-                )
+        for label, count in sorted_fails:
+            pallets_above_5 = get_pallets_above_5_with_count(
+                pallet_counter[setup_tag][label]
+            )
 
-                line = format_fail_with_pallets(label, count, pallets_above_5)
-                print(line)
-        else:
-            print("BRAK FAIL.")
+            if pallets_above_5:
+                pallets_text = ", ".join([f"{pallet}({qty})" for pallet, qty in pallets_above_5])
+            else:
+                pallets_text = ""
 
-        print(f"\nSUMA FAIL DLA SETUP TAG: {setup_total}")
-        print("-" * 140)
+            print(f"{label:<100} | {count:>6} | {pallets_text:<30}")
 
-    print(f"\nSUMA WSZYSTKICH FAIL: {grand_total}")
-    print("=" * 140)
+        print("-" * 150)
+        print(f"{'SUMA FAIL DLA SETUP TAG':<100} | {setup_total:>6}")
+        print("-" * 150)
+
+    print("=" * 150)
+    print(f"{'SUMA WSZYSTKICH FAIL':<100} | {grand_total:>6}")
+    print("=" * 150)
 
 
 def main():
@@ -268,12 +286,14 @@ def main():
         print("-", file_path)
         analyze_csv_file(file_path, grouped_counter, pallet_counter)
 
+    # Konsola / program .exe zostaje pelny, nie tylko TOP 5
     print_console_summary(grouped_counter, pallet_counter)
 
     exe_dir = get_exe_folder()
     timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
     output_file = os.path.join(exe_dir, f"fail_report__{timestamp}.txt")
 
+    # Tylko plik TXT jest skrocony do TOP 5 po przecinku
     write_report(output_file, grouped_counter, pallet_counter, csv_files)
 
     print("\nZapisano raport:")
