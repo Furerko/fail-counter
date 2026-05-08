@@ -50,7 +50,10 @@ def get_exe_folder():
 
 def normalize_header(header):
     """
-    Ujednolica nazwe kolumny, zeby SETUP TAG bylo wykrywane nawet gdy sa spacje.
+    Ujednolica nazwe kolumny.
+    Przyklad:
+    SETUP_TAG -> SETUP TAG
+    Pallet Id -> PALLET ID
     """
     if header is None:
         return ""
@@ -63,13 +66,11 @@ def find_setup_tag_from_row(row):
     Jesli kolumna nie istnieje, zwraca UNKNOWN_SETUP_TAG.
     """
 
-    # 1. Normalna kolumna CSV
     for key, value in row.items():
         if normalize_header(key) == "SETUP TAG":
             if value and str(value).strip():
                 return str(value).strip()
 
-    # 2. Fallback: szukanie tekstowe w calym wierszu, np. SETUP TAG=...
     row_text = " ".join(str(v) for v in row.values() if v is not None)
 
     patterns = [
@@ -87,6 +88,41 @@ def find_setup_tag_from_row(row):
     return "UNKNOWN_SETUP_TAG"
 
 
+def find_pallet_id_from_row(row):
+    """
+    Pobiera PALLET ID z kolumny PALLET ID.
+    Zwraca ostatnie 3 znaki, np.:
+    P14740E181103 -> 103
+
+    Jesli PALLET ID nie istnieje, zwraca UNKNOWN.
+    """
+
+    # 1. Normalna kolumna CSV
+    for key, value in row.items():
+        if normalize_header(key) == "PALLET ID":
+            if value and str(value).strip():
+                pallet_id = str(value).strip()
+                return pallet_id[-3:]
+
+    # 2. Fallback: szukanie tekstowe w calym wierszu, np. PALLET ID=...
+    row_text = " ".join(str(v) for v in row.values() if v is not None)
+
+    patterns = [
+        r"PALLET ID\s*=\s*([^,;]+)",
+        r"PALLET_ID\s*=\s*([^,;]+)",
+        r"PALLET ID\s*:\s*([^,;]+)",
+        r"PALLET_ID\s*:\s*([^,;]+)",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, row_text, re.IGNORECASE)
+        if match:
+            pallet_id = match.group(1).strip()
+            return pallet_id[-3:]
+
+    return "UNKNOWN"
+
+
 def detect_dialect(file_path):
     """
     Probuje wykryc separator CSV.
@@ -101,12 +137,14 @@ def detect_dialect(file_path):
         return csv.excel
 
 
-def analyze_csv_file(file_path, grouped_counter, file_counter):
+def analyze_csv_file(file_path, grouped_counter, file_counter, pallet_counter):
     """
     Analizuje jeden plik CSV.
+
     Wyniki zapisuje do:
     - grouped_counter[SETUP TAG][FAIL LABEL]
     - file_counter[NAZWA PLIKU][SETUP TAG][FAIL LABEL]
+    - pallet_counter[SETUP TAG][FAIL LABEL][PALLET_LAST_3]
     """
 
     dialect = detect_dialect(file_path)
@@ -119,48 +157,75 @@ def analyze_csv_file(file_path, grouped_counter, file_counter):
             f.seek(0)
             for line in f:
                 setup_tag = "UNKNOWN_SETUP_TAG"
+                pallet_short = "UNKNOWN"
 
                 for key, label in FAIL_PATTERNS.items():
                     if key in line:
                         grouped_counter[setup_tag][label] += 1
                         file_counter[os.path.basename(file_path)][setup_tag][label] += 1
+                        pallet_counter[setup_tag][label][pallet_short] += 1
             return
 
         for row in reader:
             setup_tag = find_setup_tag_from_row(row)
+            pallet_short = find_pallet_id_from_row(row)
             row_text = " ".join(str(v) for v in row.values() if v is not None)
 
             for key, label in FAIL_PATTERNS.items():
                 if key in row_text:
                     grouped_counter[setup_tag][label] += 1
                     file_counter[os.path.basename(file_path)][setup_tag][label] += 1
+                    pallet_counter[setup_tag][label][pallet_short] += 1
 
 
-def write_report(output_file, grouped_counter, file_counter, input_files):
+def get_pallets_above_5(pallet_counter_for_fail):
+    """
+    Zwraca liste paletek, gdzie liczba FAIL dla danego failure kodu jest > 5.
+    Przyklad wyniku:
+    ['102', '103', '104']
+    """
+
+    pallets = []
+
+    for pallet_short, count in pallet_counter_for_fail.items():
+        if pallet_short != "UNKNOWN" and count > 5:
+            pallets.append(pallet_short)
+
+    # sortowanie numeryczne jesli sie da, inaczej tekstowe
+    def sort_key(value):
+        if str(value).isdigit():
+            return int(value)
+        return str(value)
+
+    return sorted(pallets, key=sort_key)
+
+
+def write_report(output_file, grouped_counter, file_counter, pallet_counter, input_files):
     """
     Tworzy raport TXT:
     - lista analizowanych plikow
     - podzial po SETUP TAG
     - wszystkie FAILe
     - TOP 5 dla kazdego SETUP TAG
+    - paletki z >5 FAIL dla kazdego failure kodu
     - podzial per plik
     """
 
     with open(output_file, "w", encoding="utf-8") as f:
         f.write("FAIL REPORT\n")
         f.write(f"DATA: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write("=" * 100 + "\n\n")
+        f.write("=" * 120 + "\n\n")
 
         f.write("ANALIZOWANE PLIKI:\n")
         for file_path in input_files:
             f.write(f"- {file_path}\n")
 
-        f.write("\n" + "=" * 100 + "\n\n")
+        f.write("\n" + "=" * 120 + "\n\n")
 
         grand_total = 0
 
         f.write("PODSUMOWANIE WG SETUP TAG\n")
-        f.write("=" * 100 + "\n\n")
+        f.write("=" * 120 + "\n\n")
 
         for setup_tag, counter in grouped_counter.items():
             sorted_fails = counter.most_common()
@@ -168,34 +233,51 @@ def write_report(output_file, grouped_counter, file_counter, input_files):
             grand_total += total_for_setup
 
             f.write(f"SETUP TAG: {setup_tag}\n")
-            f.write("-" * 100 + "\n")
+            f.write("-" * 120 + "\n")
             f.write("ALL FAILS:\n")
 
             for label, count in sorted_fails:
-                f.write(f"{label} {count}\n")
+                pallets_above_5 = get_pallets_above_5(pallet_counter[setup_tag][label])
+
+                if pallets_above_5:
+                    pallets_text = ", ".join(pallets_above_5)
+                    f.write(f"{label} {count} | PALETKI >5 FAIL: {pallets_text}\n")
+                else:
+                    f.write(f"{label} {count}\n")
 
             f.write("\nTOP 5:\n")
             top5 = sorted_fails[:5]
 
             if top5:
-                top5_line = ", ".join([f"{label} {count}" for label, count in top5]) + "."
+                top5_parts = []
+
+                for label, count in top5:
+                    pallets_above_5 = get_pallets_above_5(pallet_counter[setup_tag][label])
+
+                    if pallets_above_5:
+                        pallets_text = ", ".join(pallets_above_5)
+                        top5_parts.append(f"{label} {count} [PALETKI >5 FAIL: {pallets_text}]")
+                    else:
+                        top5_parts.append(f"{label} {count}")
+
+                top5_line = ", ".join(top5_parts) + "."
             else:
                 top5_line = "BRAK FAIL."
 
             f.write(top5_line + "\n")
 
             f.write(f"\nSUMA FAIL DLA SETUP TAG: {total_for_setup}\n")
-            f.write("=" * 100 + "\n\n")
+            f.write("=" * 120 + "\n\n")
 
         f.write(f"SUMA WSZYSTKICH FAIL: {grand_total}\n")
-        f.write("=" * 100 + "\n\n")
+        f.write("=" * 120 + "\n\n")
 
         f.write("SZCZEGOLY WG PLIKOW\n")
-        f.write("=" * 100 + "\n\n")
+        f.write("=" * 120 + "\n\n")
 
         for file_name, setup_data in file_counter.items():
             f.write(f"PLIK: {file_name}\n")
-            f.write("-" * 100 + "\n")
+            f.write("-" * 120 + "\n")
 
             for setup_tag, counter in setup_data.items():
                 f.write(f"  SETUP TAG: {setup_tag}\n")
@@ -205,37 +287,40 @@ def write_report(output_file, grouped_counter, file_counter, input_files):
 
                 f.write(f"    SUMA: {sum(counter.values())}\n\n")
 
-            f.write("=" * 100 + "\n\n")
+            f.write("=" * 120 + "\n\n")
 
 
-def print_console_summary(grouped_counter):
+def print_console_summary(grouped_counter, pallet_counter):
     """
     Pokazuje wynik w konsoli.
     """
 
     print("\nWYNIK ANALIZY")
-    print("=" * 120)
+    print("=" * 140)
 
     grand_total = 0
 
     for setup_tag, counter in grouped_counter.items():
         print(f"\nSETUP TAG: {setup_tag}")
-        print("-" * 120)
-        print(f"{'FAIL DESCRIPTION':<100} | {'COUNT':>6}")
-        print("-" * 120)
+        print("-" * 140)
+        print(f"{'FAIL DESCRIPTION':<90} | {'COUNT':>6} | {'PALETKI >5 FAIL':<25}")
+        print("-" * 140)
 
         for label, count in counter.most_common():
-            print(f"{label:<100} | {count:>6}")
+            pallets_above_5 = get_pallets_above_5(pallet_counter[setup_tag][label])
+            pallets_text = ", ".join(pallets_above_5) if pallets_above_5 else ""
+
+            print(f"{label:<90} | {count:>6} | {pallets_text:<25}")
 
         setup_total = sum(counter.values())
         grand_total += setup_total
 
-        print("-" * 120)
-        print(f"{'SUMA DLA SETUP TAG':<100} | {setup_total:>6}")
+        print("-" * 140)
+        print(f"{'SUMA DLA SETUP TAG':<90} | {setup_total:>6}")
 
-    print("=" * 120)
-    print(f"{'SUMA WSZYSTKICH FAIL':<100} | {grand_total:>6}")
-    print("=" * 120)
+    print("=" * 140)
+    print(f"{'SUMA WSZYSTKICH FAIL':<90} | {grand_total:>6}")
+    print("=" * 140)
 
 
 def main():
@@ -258,13 +343,14 @@ def main():
 
     grouped_counter = defaultdict(Counter)
     file_counter = defaultdict(lambda: defaultdict(Counter))
+    pallet_counter = defaultdict(lambda: defaultdict(Counter))
 
     print("Analizowane pliki:")
     for file_path in csv_files:
         print("-", file_path)
-        analyze_csv_file(file_path, grouped_counter, file_counter)
+        analyze_csv_file(file_path, grouped_counter, file_counter, pallet_counter)
 
-    print_console_summary(grouped_counter)
+    print_console_summary(grouped_counter, pallet_counter)
 
     exe_dir = get_exe_folder()
 
@@ -273,7 +359,7 @@ def main():
     timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
     output_file = os.path.join(exe_dir, f"fail_report__{timestamp}.txt")
 
-    write_report(output_file, grouped_counter, file_counter, csv_files)
+    write_report(output_file, grouped_counter, file_counter, pallet_counter, csv_files)
 
     print("\nZapisano raport:")
     print(output_file)
