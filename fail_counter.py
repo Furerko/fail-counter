@@ -260,7 +260,13 @@ def get_pallets_above_5_with_count(pallet_counter_for_fail):
     return sorted(pallets, key=sort_key)
 
 
-def get_hot_pallets(hot_pallet_counter_for_setup):
+def get_hot_pallets_top5(hot_pallet_counter_for_setup):
+    """
+    Zwraca TOP 5 hot pallets dla danego SETUP TAG.
+    Hot pallet = paletka z laczna iloscia FAIL > 5.
+    Sortowanie: od najwiekszej ilosci FAIL.
+    """
+
     hot_pallets = []
 
     for pallet_short, fail_counter in hot_pallet_counter_for_setup.items():
@@ -272,7 +278,23 @@ def get_hot_pallets(hot_pallet_counter_for_setup):
         if total > 5:
             hot_pallets.append((pallet_short, total, fail_counter))
 
-    return sorted(hot_pallets, key=lambda x: (-x[1], x[0]))
+    return sorted(hot_pallets, key=lambda x: (-x[1], x[0]))[:5]
+
+
+def get_trend_top5_hours(trend_counter_for_setup):
+    """
+    Zwraca TOP 5 godzin z najwieksza iloscia FAIL.
+    UNKNOWN_TIME idzie na koniec, jezeli wystepuje.
+    """
+
+    items = list(trend_counter_for_setup.items())
+
+    def sort_key(item):
+        hour_bucket, count = item
+        unknown_flag = 1 if hour_bucket == "UNKNOWN_TIME" else 0
+        return (-count, unknown_flag, hour_bucket)
+
+    return sorted(items, key=sort_key)[:5]
 
 
 def format_fail_with_pallets(label, count, pallets_above_5):
@@ -347,8 +369,8 @@ def print_console_summary(
     """
     Program .exe / konsola:
     - wszystkie FAILe
-    - trend po godzinie
-    - hot pallet
+    - TOP 5 godzin trendu
+    - TOP 5 hot pallets
     """
 
     print("\nWYNIK ANALIZY - WSZYSTKIE FAIL WG SETUP TAG")
@@ -382,18 +404,22 @@ def print_console_summary(
         print(f"{'SUMA FAIL DLA SETUP TAG':<100} | {setup_total:>6}")
         print("-" * 160)
 
-        print("\nTREND FAIL WG GODZINY:")
-        if trend_counter[setup_tag]:
-            for hour_bucket, count in sorted(trend_counter[setup_tag].items()):
+        # TYLKO TOP 5 GODZIN
+        print("\nTREND FAIL WG GODZINY - TOP 5:")
+        trend_top5 = get_trend_top5_hours(trend_counter[setup_tag])
+
+        if trend_top5:
+            for hour_bucket, count in trend_top5:
                 print(f"{hour_bucket} -> {count}")
         else:
             print("BRAK DANYCH CZASOWYCH.")
 
-        print("\nHOT PALLETS:")
-        hot_pallets = get_hot_pallets(hot_pallet_counter[setup_tag])
+        # TYLKO TOP 5 HOT PALLETS
+        print("\nHOT PALLETS - TOP 5:")
+        hot_pallets_top5 = get_hot_pallets_top5(hot_pallet_counter[setup_tag])
 
-        if hot_pallets:
-            for pallet_short, total, fail_counter in hot_pallets:
+        if hot_pallets_top5:
+            for pallet_short, total, fail_counter in hot_pallets_top5:
                 fail_parts = [
                     f"{label} {count}"
                     for label, count in fail_counter.most_common()
@@ -444,7 +470,7 @@ def main():
             hot_pallet_counter
         )
 
-    # To jest widoczne tylko w programie .exe / konsoli
+    # Widoczne tylko w programie .exe / konsoli
     print_console_summary(
         grouped_counter,
         pallet_counter,
@@ -456,7 +482,7 @@ def main():
     timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
     output_file = os.path.join(exe_dir, f"fail_report__{timestamp}.txt")
 
-    # TXT zostaje skrocony - bez trendu i hot pallet
+    # TXT bez trendu i bez hot pallet jako osobnych sekcji
     write_report(output_file, grouped_counter, pallet_counter, csv_files)
 
     print("\nZapisano raport TXT:")
