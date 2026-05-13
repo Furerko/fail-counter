@@ -6,11 +6,26 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
 FAIL_PATTERNS = {
+    "FAIL ALIGN - (005) Program Stopped by Operator":
+        "FAIL ALIGN (005) - Program Stopped by Operator",
+
+    "FAIL ALIGN - (008) Unable to Acquire Align Camera Image.  Frame error":
+        "FAIL ALIGN (008) - Unable to Acquire Align Camera Image - Frame error",
+
+    "FAIL ALIGN - (009) Unable to Detect Lens Gripped":
+        "FAIL ALIGN (009) - Unable to Detect Lens Gripped",
+
     "FAIL ALIGN - (063) Align Focus Conversion Failed.  Unable to align lens within maximum number of attempts.":
         "FAIL ALIGN (063) - Align Focus Conversion failed",
 
     "FAIL ALIGN - (205) Failed to compute final Z position":
         "FAIL ALIGN (205) - Failed to compute final Z position",
+
+    "FAIL ALIGN - Align.  Failed to translate error code":
+        "FAIL ALIGN - Failed to translate error code",
+
+    "FAIL ALIGN - Dispense.  Weigh Scale timed out.":
+        "FAIL ALIGN - Dispense Weigh Scale timed out",
 
     "FAIL ALIGN - Final Image Test Failed.  MTF (Could not find the required geometry in the ROI.)":
         "FAIL ALIGN - MTF (ROI not found)",
@@ -18,11 +33,32 @@ FAIL_PATTERNS = {
     "FAIL ALIGN - Final Image Test Failed.  MTF.":
         "FAIL ALIGN - MTF",
 
+    "FAIL DISPENSE - (005) Program Stopped by Operator":
+        "FAIL DISPENSE (005) - Program Stopped by Operator",
+
+    "FAIL DISPENSE - (057) Particle Test Failed.":
+        "FAIL DISPENSE (057) - Particle Test Failed",
+
     "FAIL DISPENSE - (112) Unable to Detect Camera Housing":
         "FAIL DISPENSE (112) - Unable to Detect Camera Housing",
 
     "FAIL DISPENSE - (128) Unable to Verify Epoxy Bead":
         "FAIL DISPENSE (128) - Epoxy Bead validation failed",
+
+    "General Error: One or more errors occurred.":
+        "GENERAL ERROR - One or more errors occurred",
+
+    "Material Handler Error Station=Station 1.202 (Dispense Main)":
+        "MATERIAL HANDLER - Station 1.202 Dispense Main",
+
+    "Material Handler Error Station=Station 1.211 (Utility Main)":
+        "MATERIAL HANDLER - Station 1.211 Utility Main",
+
+    "Material Handler Error Station=Station 2.203 (Dispense Return)":
+        "MATERIAL HANDLER - Station 2.203 Dispense Return",
+
+    "Open Camera Ex call on Dispense failed - Open Task Cancelled.":
+        "CAMERA DISPENSE - Open Task Cancelled",
 
     "Open Camera ExDone on Align call failed - -2094":
         "CAMERA ALIGN (2094) - Frame error",
@@ -190,14 +226,6 @@ def get_hour_bucket(dt):
 
 
 def format_hour_range(hour_bucket):
-    """
-    Zamienia:
-    2026-05-06 06:00
-
-    na:
-    2026-05-06 od 06:00 do 06:59
-    """
-
     if hour_bucket == "UNKNOWN_TIME":
         return "UNKNOWN_TIME"
 
@@ -304,11 +332,6 @@ def get_hot_pallets_top5(hot_pallet_counter_for_setup):
 
 
 def get_trend_top5_hours(trend_counter_for_setup):
-    """
-    Zwraca TOP 5 godzin z najwieksza iloscia FAIL.
-    UNKNOWN_TIME idzie na koniec.
-    """
-
     items = list(trend_counter_for_setup.items())
 
     def sort_key(item):
@@ -320,11 +343,6 @@ def get_trend_top5_hours(trend_counter_for_setup):
 
 
 def get_top_pallets_for_hour(trend_pallet_counter_for_hour):
-    """
-    Zwraca paletki i ilosci FAIL dla danej godziny.
-    Pokazuje maksymalnie TOP 5 paletek w tej godzinie.
-    """
-
     pallets = []
 
     for pallet_short, count in trend_pallet_counter_for_hour.items():
@@ -343,16 +361,6 @@ def format_fail_with_pallets(label, count, pallets_above_5):
 
 
 def write_report(output_file, grouped_counter, pallet_counter, input_files):
-    """
-    TXT zostaje skrocony:
-    - TOP 5 FAIL dla kazdego SETUP TAG
-    - po przecinku
-    - z paletkami >5 przy danym FAIL
-
-    Trend i Hot Pallet NIE sa zapisywane do TXT.
-    Sa tylko w programie .exe / konsoli.
-    """
-
     with open(output_file, "w", encoding="utf-8") as f:
         f.write("FAIL REPORT - TOP 5 WG SETUP TAG\n")
         f.write(f"DATA: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -405,14 +413,6 @@ def print_console_summary(
     trend_pallet_counter,
     hot_pallet_counter
 ):
-    """
-    Program .exe / konsola:
-    - wszystkie FAILe
-    - TOP 5 godzin trendu
-    - dla kazdej godziny: od-do, paletki i ilosci
-    - TOP 5 hot pallets
-    """
-
     print("\nWYNIK ANALIZY - WSZYSTKIE FAIL WG SETUP TAG")
     print("=" * 170)
 
@@ -444,7 +444,6 @@ def print_console_summary(
         print(f"{'SUMA FAIL DLA SETUP TAG':<100} | {setup_total:>6}")
         print("-" * 170)
 
-        # TYLKO TOP 5 GODZIN + zakres od-do + paletki i ilosci
         print("\nTREND FAIL WG GODZINY - TOP 5:")
         trend_top5 = get_trend_top5_hours(trend_counter[setup_tag])
 
@@ -467,7 +466,6 @@ def print_console_summary(
         else:
             print("BRAK DANYCH CZASOWYCH.")
 
-        # TYLKO TOP 5 HOT PALLETS
         print("\nHOT PALLETS - TOP 5:")
         hot_pallets_top5 = get_hot_pallets_top5(hot_pallet_counter[setup_tag])
 
@@ -525,7 +523,6 @@ def main():
             hot_pallet_counter
         )
 
-    # Widoczne tylko w programie .exe / konsoli
     print_console_summary(
         grouped_counter,
         pallet_counter,
@@ -538,7 +535,6 @@ def main():
     timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
     output_file = os.path.join(exe_dir, f"fail_report__{timestamp}.txt")
 
-    # TXT bez trendu i bez hot pallet jako osobnych sekcji
     write_report(output_file, grouped_counter, pallet_counter, csv_files)
 
     print("\nZapisano raport TXT:")
