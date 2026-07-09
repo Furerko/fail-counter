@@ -1,7 +1,9 @@
+
 import sys
 import os
 import csv
 import re
+from io import StringIO
 from collections import Counter, defaultdict, deque
 
 
@@ -9,31 +11,15 @@ FAIL_PATTERNS = {
     "Open Camera ExDone on IQT call failed - -2107":
         "CAMERA IQT (2107) - Camera communication error",
 
-    "MTF Image Test error.":
+    "MTF Image Test error":
         "MTF Image Test error",
 
     "Open Camera ExDone on IQT call failed - -2094":
         "CAMERA IQT (2094) - Frame error",
 
-    "Centration Test error.":
+    "Centration Test error":
         "Centration Test error",
 }
-
-
-def normalize_header(header):
-    if header is None:
-        return ""
-    return str(header).strip().upper().replace("_", " ")
-
-
-def detect_dialect(file_path):
-    try:
-        with open(file_path, "r", encoding="utf-8", errors="ignore", newline="") as f:
-            sample = f.read(4096)
-            dialect = csv.Sniffer().sniff(sample)
-            return dialect
-    except Exception:
-        return csv.excel
 
 
 def extract_last_3_digits(value):
@@ -59,108 +45,137 @@ def extract_last_3_digits(value):
     return "UNKNOWN"
 
 
-def get_pallet_short_from_row(row):
+def split_records_from_process_history(file_text):
     """
-    Pobiera PALLET ID z kolumny PALLET ID.
-    Zwraca tylko ostatnie 3 cyfry.
-    """
+    Dzieli plik na rekordy po dacie na poczatku rekordu.
+    Rekord zaczyna sie np.:
+    6/26/2026,12:00:10 AM,...
 
-    for key, value in row.items():
-        if normalize_header(key) == "PALLET ID":
-            return extract_last_3_digits(value)
-
-    return "UNKNOWN"
-
-
-def get_datetime_from_row(row):
-    """
-    Pobiera DATE + TIME z wiersza.
-    Jesli nie znajdzie, zwraca UNKNOWN_TIME.
+    To omija problem, gdy bardzo dlugie rekordy sa rozbite na kilka linii.
     """
 
-    date_value = ""
-    time_value = ""
+    pattern = re.compile(r"(?m)^\d{1,2}/\d{1,2}/\d{4},\d{1,2}:\d{2}:\d{2}\s*(?:AM|PM),")
 
-    for key, value in row.items():
-        normalized = normalize_header(key)
+    matches = list(pattern.finditer(file_text))
 
-        if normalized == "DATE" and value:
-            date_value = str(value).strip()
+    if not matches:
+        return []
 
-        if normalized == "TIME" and value:
-            time_value = str(value).strip()
+    records = []
+
+    for i, match in enumerate(matches):
+        start = match.start()
+
+        if i + 1 < len(matches):
+            end = matches[i + 1].start()
+        else:
+            end = len(file_text)
+
+        record = file_text[start:end].strip()
+
+        if record:
+            records.append(record)
+
+    return records
+
+
+def parse_record_first_columns(record_text):
+    """
+    Probuje sparsowac poczatek rekordu CSV.
+    W ProcessHistory kolumny sa w tej kolejnosci:
+    DATE = index 0
+    TIME = index 1
+    PALLET ID = index 16
+
+    Czyli:
+    fields[0]  -> DATE
+    fields[1]  -> TIME
+    fields[16] -> PALLET ID
+    """
+
+    one_line = record_text.replace("\r", " ").replace("\n", " ")
+
+    try:
+        reader = csv.reader(StringIO(one_line))
+        fields = next(reader)
+
+        date_value = fields[0].strip() if len(fields) > 0 else ""
+        time_value = fields[1].strip() if len(fields) > 1 else ""
+        pallet_id = fields[16].strip() if len(fields) > 16 else ""
+
+        return date_value, time_value, pallet_id
+
+    except Exception:
+        return "", "", ""
+
+
+def fallback_find_pallet_id(record_text):
+    """
+    Awaryjnie szuka PALLET ID tekstowo.
+    Przyklad wzorca:
+    P14740H230202
+    P14740G210402
+    """
+
+    match = re.search(r"P\d{5}[A-Z]\d{6}", record_text)
+
+    if match:
+        return match.group(0)
+
+    return ""
+
+
+def analyze_record(record_text, fail_counter, pallet_counter, last_10_counter):
+    date_value, time_value, pallet_id = parse_record_first_columns(record_text)
+
+    if not pallet_id:
+        pallet_id = fallback_find_pallet_id(record_text)
+
+    pallet_short = extract_last_3_digits(pallet_id)
 
     if date_value and time_value:
-        return date_value + " " + time_value
+        date_time = date_value + " " + time_value
+    elif date_value:
+        date_time = date_value
+    elif time_value:
+        date_time = time_value
+    else:
+        date_time = "UNKNOWN_TIME"
 
-    if date_value:
-        return date_value
+    record_lower = record_text.lower()
 
-    if time_value:
-        return time_value
-
-    return "UNKNOWN_TIME"
-
-
-def row_to_text(row):
-    """
-    Zamienia caly wiersz CSV na tekst.
-    Dziala takze wtedy, gdy csv.DictReader trafi na dodatkowe kolumny.
-    """
-
-    parts = []
-
-    for value in row.values():
-        if value is None:
-            continue
-
-        if isinstance(value, list):
-            parts.extend(str(x) for x in value if x is not None)
-        else:
-            parts.append(str(value))
-
-    return " ".join(parts)
+    for pattern, label in FAIL_PATTERNS.items():
+        if pattern.lower() in record_lower:
+            fail_counter[label] += 1
+            pallet_counter[label][pallet_short] += 1
+            last_10_counter[label].append((date_time, pallet_short))
 
 
 def analyze_csv_file(file_path, fail_counter, pallet_counter, last_10_counter):
-    dialect = detect_dialect(file_path)
+    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+        file_text = f.read()
 
-    with open(file_path, "r", encoding="utf-8", errors="ignore", newline="") as f:
-        reader = csv.DictReader(f, dialect=dialect)
+    records = split_records_from_process_history(file_text)
 
-        if not reader.fieldnames:
-            f.seek(0)
+    if records:
+        for record in records:
+            analyze_record(record, fail_counter, pallet_counter, last_10_counter)
+        return
 
-            for line in f:
-                line_lower = line.lower()
-                pallet_short = "UNKNOWN"
-                date_time = "UNKNOWN_TIME"
+    # Fallback, gdyby plik mial inny format i nie udalo sie znalezc rekordow po dacie
+    for line in file_text.splitlines():
+        line_lower = line.lower()
 
-                for pattern, label in FAIL_PATTERNS.items():
-                    if pattern.lower() in line_lower:
-                        fail_counter[label] += 1
-                        pallet_counter[label][pallet_short] += 1
-                        last_10_counter[label].append((date_time, pallet_short))
-
-            return
-
-        for row in reader:
-            pallet_short = get_pallet_short_from_row(row)
-            date_time = get_datetime_from_row(row)
-
-            row_text = row_to_text(row)
-            row_text_lower = row_text.lower()
-
-            for pattern, label in FAIL_PATTERNS.items():
-                if pattern.lower() in row_text_lower:
-                    fail_counter[label] += 1
-                    pallet_counter[label][pallet_short] += 1
-                    last_10_counter[label].append((date_time, pallet_short))
+        for pattern, label in FAIL_PATTERNS.items():
+            if pattern.lower() in line_lower:
+                fail_counter[label] += 1
+                pallet_counter[label]["UNKNOWN"] += 1
+                last_10_counter[label].append(("UNKNOWN_TIME", "UNKNOWN"))
 
 
 def format_pallets(counter):
     """
-    Format wyniku:
+    Format:
     202(5), 204(3), 402(2), 206(1)
     """
 
@@ -181,11 +196,6 @@ def format_pallets(counter):
 
 
 def print_last_10(label, last_10_counter):
-    """
-    Pokazuje ostatnie 10 faili dla danego failure kodu:
-    data/godzina + paletka.
-    """
-
     events = list(last_10_counter[label])
 
     if not events:
