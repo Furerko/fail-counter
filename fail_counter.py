@@ -54,7 +54,9 @@ def split_records_from_process_history(file_text):
     To omija problem, gdy bardzo dlugie rekordy sa rozbite na kilka linii.
     """
 
-    pattern = re.compile(r"(?m)^\d{1,2}/\d{1,2}/\d{4},\d{1,2}:\d{2}:\d{2}\s*(?:AM|PM),")
+    pattern = re.compile(
+        r"(?m)^\d{1,2}/\d{1,2}/\d{4},\d{1,2}:\d{2}:\d{2}\s*(?:AM|PM),"
+    )
 
     matches = list(pattern.finditer(file_text))
 
@@ -125,7 +127,13 @@ def fallback_find_pallet_id(record_text):
     return ""
 
 
-def analyze_record(record_text, fail_counter, pallet_counter, last_10_counter):
+def analyze_record(
+    record_text,
+    fail_counter,
+    pallet_counter,
+    last_10_counter,
+    last_20_global
+):
     date_value, time_value, pallet_id = parse_record_first_columns(record_text)
 
     if not pallet_id:
@@ -148,10 +156,21 @@ def analyze_record(record_text, fail_counter, pallet_counter, last_10_counter):
         if pattern.lower() in record_lower:
             fail_counter[label] += 1
             pallet_counter[label][pallet_short] += 1
+
+            # Ostatnie 10 dla danego failure kodu
             last_10_counter[label].append((date_time, pallet_short))
 
+            # Ostatnie 20 wszystkich FAIL globalnie
+            last_20_global.append((date_time, pallet_short, label))
 
-def analyze_csv_file(file_path, fail_counter, pallet_counter, last_10_counter):
+
+def analyze_csv_file(
+    file_path,
+    fail_counter,
+    pallet_counter,
+    last_10_counter,
+    last_20_global
+):
     with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
         file_text = f.read()
 
@@ -159,7 +178,13 @@ def analyze_csv_file(file_path, fail_counter, pallet_counter, last_10_counter):
 
     if records:
         for record in records:
-            analyze_record(record, fail_counter, pallet_counter, last_10_counter)
+            analyze_record(
+                record,
+                fail_counter,
+                pallet_counter,
+                last_10_counter,
+                last_20_global
+            )
         return
 
     # Fallback, gdyby plik mial inny format i nie udalo sie znalezc rekordow po dacie
@@ -171,6 +196,7 @@ def analyze_csv_file(file_path, fail_counter, pallet_counter, last_10_counter):
                 fail_counter[label] += 1
                 pallet_counter[label]["UNKNOWN"] += 1
                 last_10_counter[label].append(("UNKNOWN_TIME", "UNKNOWN"))
+                last_20_global.append(("UNKNOWN_TIME", "UNKNOWN", label))
 
 
 def format_pallets(counter):
@@ -195,6 +221,31 @@ def format_pallets(counter):
     return ", ".join([f"{pallet}({qty})" for pallet, qty in sorted_items])
 
 
+def print_last_20_global(last_20_global):
+    """
+    Pokazuje na gorze ostatnie 20 szt. FAIL:
+    data/godzina + paletka + failure code.
+    """
+
+    events = list(last_20_global)
+
+    print("\nOSTATNIE 20 SZT. FAIL")
+    print("=" * 140)
+
+    if not events:
+        print("Brak znalezionych FAIL.")
+        print("=" * 140)
+        return
+
+    print(f"{'LP':>3} | {'DATE / TIME':<25} | {'PALLET':<8} | {'FAILURE CODE':<90}")
+    print("-" * 140)
+
+    for idx, (date_time, pallet_short, label) in enumerate(events, start=1):
+        print(f"{idx:>3} | {date_time:<25} | {pallet_short:<8} | {label:<90}")
+
+    print("=" * 140)
+
+
 def print_last_10(label, last_10_counter):
     events = list(last_10_counter[label])
 
@@ -208,10 +259,13 @@ def print_last_10(label, last_10_counter):
         print(f"    {idx:>2}. {date_time} | PALLET: {pallet_short}")
 
 
-def print_summary(fail_counter, pallet_counter, last_10_counter, input_files):
+def print_summary(fail_counter, pallet_counter, last_10_counter, last_20_global, input_files):
     print("\nANALIZOWANE PLIKI:")
     for file_path in input_files:
         print("-", file_path)
+
+    # NOWA SEKCJA NA GORZE
+    print_last_20_global(last_20_global)
 
     print("\nWYNIK ANALIZY")
     print("=" * 140)
@@ -259,10 +313,25 @@ def main():
     pallet_counter = defaultdict(Counter)
     last_10_counter = defaultdict(lambda: deque(maxlen=10))
 
-    for file_path in csv_files:
-        analyze_csv_file(file_path, fail_counter, pallet_counter, last_10_counter)
+    # NOWE: ostatnie 20 wszystkich FAIL globalnie
+    last_20_global = deque(maxlen=20)
 
-    print_summary(fail_counter, pallet_counter, last_10_counter, csv_files)
+    for file_path in csv_files:
+        analyze_csv_file(
+            file_path,
+            fail_counter,
+            pallet_counter,
+            last_10_counter,
+            last_20_global
+        )
+
+    print_summary(
+        fail_counter,
+        pallet_counter,
+        last_10_counter,
+        last_20_global,
+        csv_files
+    )
 
     input("\nENTER aby zamknac...")
 
