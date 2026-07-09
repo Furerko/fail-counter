@@ -2,7 +2,8 @@
 import sys
 import os
 import csv
-from collections import Counter, defaultdict
+import re
+from collections import Counter, defaultdict, deque
 
 
 FAIL_PATTERNS = {
@@ -36,26 +37,76 @@ def detect_dialect(file_path):
         return csv.excel
 
 
+def extract_last_3_digits(value):
+    """
+    Z PALLET ID wyciaga ostatnie 3 cyfry.
+
+    Przyklady:
+    P14740H230202 -> 202
+    P14740H230204 -> 204
+    P14740G210402 -> 402
+    P14740H230206 -> 206
+    """
+
+    if value is None:
+        return "UNKNOWN"
+
+    text = str(value).strip()
+    digits = re.findall(r"\d", text)
+
+    if len(digits) >= 3:
+        return "".join(digits[-3:])
+
+    return "UNKNOWN"
+
+
 def get_pallet_short_from_row(row):
     """
     Pobiera PALLET ID z kolumny PALLET ID.
-    Zwraca ostatnie 3 znaki, np.:
-    P14740E181103 -> 103
+    Zwraca tylko ostatnie 3 cyfry.
     """
 
     for key, value in row.items():
         if normalize_header(key) == "PALLET ID":
-            if value and str(value).strip():
-                pallet_id = str(value).strip()
-                return pallet_id[-3:]
+            return extract_last_3_digits(value)
 
     return "UNKNOWN"
+
+
+def get_datetime_from_row(row):
+    """
+    Pobiera DATE + TIME z wiersza.
+    Jesli nie znajdzie, zwraca UNKNOWN_TIME.
+    """
+
+    date_value = ""
+    time_value = ""
+
+    for key, value in row.items():
+        normalized = normalize_header(key)
+
+        if normalized == "DATE" and value:
+            date_value = str(value).strip()
+
+        if normalized == "TIME" and value:
+            time_value = str(value).strip()
+
+    if date_value and time_value:
+        return date_value + " " + time_value
+
+    if date_value:
+        return date_value
+
+    if time_value:
+        return time_value
+
+    return "UNKNOWN_TIME"
 
 
 def row_to_text(row):
     """
     Zamienia caly wiersz CSV na tekst.
-    Dziala tez gdy csv.DictReader trafi na dodatkowe kolumny.
+    Dziala takze wtedy, gdy csv.DictReader trafi na dodatkowe kolumny.
     """
 
     parts = []
@@ -72,7 +123,7 @@ def row_to_text(row):
     return " ".join(parts)
 
 
-def analyze_csv_file(file_path, fail_counter, pallet_counter):
+def analyze_csv_file(file_path, fail_counter, pallet_counter, last_10_counter):
     dialect = detect_dialect(file_path)
 
     with open(file_path, "r", encoding="utf-8", errors="ignore", newline="") as f:
@@ -84,16 +135,20 @@ def analyze_csv_file(file_path, fail_counter, pallet_counter):
             for line in f:
                 line_lower = line.lower()
                 pallet_short = "UNKNOWN"
+                date_time = "UNKNOWN_TIME"
 
                 for pattern, label in FAIL_PATTERNS.items():
                     if pattern.lower() in line_lower:
                         fail_counter[label] += 1
                         pallet_counter[label][pallet_short] += 1
+                        last_10_counter[label].append((date_time, pallet_short))
 
             return
 
         for row in reader:
             pallet_short = get_pallet_short_from_row(row)
+            date_time = get_datetime_from_row(row)
+
             row_text = row_to_text(row)
             row_text_lower = row_text.lower()
 
@@ -101,12 +156,13 @@ def analyze_csv_file(file_path, fail_counter, pallet_counter):
                 if pattern.lower() in row_text_lower:
                     fail_counter[label] += 1
                     pallet_counter[label][pallet_short] += 1
+                    last_10_counter[label].append((date_time, pallet_short))
 
 
 def format_pallets(counter):
     """
-    Format:
-    103(7), 104(2), 202(1)
+    Format wyniku:
+    202(5), 204(3), 402(2), 206(1)
     """
 
     if not counter:
@@ -125,15 +181,33 @@ def format_pallets(counter):
     return ", ".join([f"{pallet}({qty})" for pallet, qty in sorted_items])
 
 
-def print_summary(fail_counter, pallet_counter, input_files):
+def print_last_10(label, last_10_counter):
+    """
+    Pokazuje ostatnie 10 faili dla danego failure kodu:
+    data/godzina + paletka.
+    """
+
+    events = list(last_10_counter[label])
+
+    if not events:
+        print("  LAST 10 FAILS: brak")
+        return
+
+    print("  LAST 10 FAILS:")
+
+    for idx, (date_time, pallet_short) in enumerate(events, start=1):
+        print(f"    {idx:>2}. {date_time} | PALLET: {pallet_short}")
+
+
+def print_summary(fail_counter, pallet_counter, last_10_counter, input_files):
     print("\nANALIZOWANE PLIKI:")
     for file_path in input_files:
         print("-", file_path)
 
     print("\nWYNIK ANALIZY")
-    print("=" * 130)
-    print(f"{'FAILURE CODE':<70} | {'FAIL COUNT':>10} | {'PALLET ID / QTY':<40}")
-    print("-" * 130)
+    print("=" * 140)
+    print(f"{'FAILURE CODE':<70} | {'FAIL COUNT':>10} | {'PALLET ID / QTY':<45}")
+    print("-" * 140)
 
     total = 0
 
@@ -141,12 +215,14 @@ def print_summary(fail_counter, pallet_counter, input_files):
         count = fail_counter[label]
         pallets_text = format_pallets(pallet_counter[label])
 
-        print(f"{label:<70} | {count:>10} | {pallets_text:<40}")
+        print(f"{label:<70} | {count:>10} | {pallets_text:<45}")
         total += count
 
-    print("-" * 130)
+        print_last_10(label, last_10_counter)
+        print("-" * 140)
+
     print(f"{'SUMA FAIL':<70} | {total:>10}")
-    print("=" * 130)
+    print("=" * 140)
 
     if total == 0:
         print("\nNie znaleziono zadnych wskazanych failure kodow.")
@@ -172,11 +248,12 @@ def main():
 
     fail_counter = Counter()
     pallet_counter = defaultdict(Counter)
+    last_10_counter = defaultdict(lambda: deque(maxlen=10))
 
     for file_path in csv_files:
-        analyze_csv_file(file_path, fail_counter, pallet_counter)
+        analyze_csv_file(file_path, fail_counter, pallet_counter, last_10_counter)
 
-    print_summary(fail_counter, pallet_counter, csv_files)
+    print_summary(fail_counter, pallet_counter, last_10_counter, csv_files)
 
     input("\nENTER aby zamknac...")
 
