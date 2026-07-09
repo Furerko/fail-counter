@@ -1,3 +1,4 @@
+
 import sys
 import os
 import csv
@@ -6,18 +7,22 @@ from io import StringIO
 from collections import Counter, defaultdict, deque
 
 
+MTF_LABEL = "MTF Image Test error"
+CENTRATION_LABEL = "Centration Test error"
+
+
 FAIL_PATTERNS = {
     "Open Camera ExDone on IQT call failed - -2107":
         "CAMERA IQT (2107) - Camera communication error",
 
     "MTF Image Test error":
-        "MTF Image Test error",
+        MTF_LABEL,
 
     "Open Camera ExDone on IQT call failed - -2094":
         "CAMERA IQT (2094) - Frame error",
 
     "Centration Test error":
-        "Centration Test error",
+        CENTRATION_LABEL,
 }
 
 
@@ -49,8 +54,6 @@ def split_records_from_process_history(file_text):
     Dzieli plik na rekordy po dacie na poczatku rekordu.
     Rekord zaczyna sie np.:
     6/26/2026,12:00:10 AM,...
-
-    To omija problem, gdy bardzo dlugie rekordy sa rozbite na kilka linii.
     """
 
     pattern = re.compile(
@@ -84,14 +87,10 @@ def parse_record_first_columns(record_text):
     """
     Probuje sparsowac poczatek rekordu CSV.
     W ProcessHistory kolumny sa w tej kolejnosci:
-    DATE = index 0
-    TIME = index 1
+    DATE      = index 0
+    TIME      = index 1
     PALLET ID = index 16
-
-    Czyli:
-    fields[0]  -> DATE
-    fields[1]  -> TIME
-    fields[16] -> PALLET ID
+    PCB ID    = index 17
     """
 
     one_line = record_text.replace("\r", " ").replace("\n", " ")
@@ -103,17 +102,18 @@ def parse_record_first_columns(record_text):
         date_value = fields[0].strip() if len(fields) > 0 else ""
         time_value = fields[1].strip() if len(fields) > 1 else ""
         pallet_id = fields[16].strip() if len(fields) > 16 else ""
+        pcb_id = fields[17].strip() if len(fields) > 17 else ""
 
-        return date_value, time_value, pallet_id
+        return date_value, time_value, pallet_id, pcb_id
 
     except Exception:
-        return "", "", ""
+        return "", "", "", ""
 
 
 def fallback_find_pallet_id(record_text):
     """
     Awaryjnie szuka PALLET ID tekstowo.
-    Przyklad wzorca:
+    Przyklad:
     P14740H230202
     P14740G210402
     """
@@ -126,19 +126,41 @@ def fallback_find_pallet_id(record_text):
     return ""
 
 
+def fallback_find_pcb_id(record_text):
+    """
+    Awaryjnie szuka PCB ID tekstowo.
+    Przykladowy PCB ID:
+    A011G933G6L74N
+    """
+
+    match = re.search(r"\bA[0-9A-Z]{10,20}\b", record_text)
+
+    if match:
+        return match.group(0)
+
+    return "UNKNOWN_PCB"
+
+
 def analyze_record(
     record_text,
     fail_counter,
     pallet_counter,
     last_10_counter,
-    last_20_global
+    last_20_global,
+    pcb_by_pallet_counter
 ):
-    date_value, time_value, pallet_id = parse_record_first_columns(record_text)
+    date_value, time_value, pallet_id, pcb_id = parse_record_first_columns(record_text)
 
     if not pallet_id:
         pallet_id = fallback_find_pallet_id(record_text)
 
+    if not pcb_id:
+        pcb_id = fallback_find_pcb_id(record_text)
+
     pallet_short = extract_last_3_digits(pallet_id)
+
+    if not pcb_id:
+        pcb_id = "UNKNOWN_PCB"
 
     if date_value and time_value:
         date_time = date_value + " " + time_value
@@ -157,10 +179,14 @@ def analyze_record(
             pallet_counter[label][pallet_short] += 1
 
             # Ostatnie 10 dla danego failure kodu
-            last_10_counter[label].append((date_time, pallet_short))
+            last_10_counter[label].append((date_time, pallet_short, pcb_id))
 
             # Ostatnie 20 wszystkich FAIL globalnie
-            last_20_global.append((date_time, pallet_short, label))
+            last_20_global.append((date_time, pallet_short, pcb_id, label))
+
+            # PCB ID table tylko dla MTF i Centration
+            if label in (MTF_LABEL, CENTRATION_LABEL):
+                pcb_by_pallet_counter[label][(pallet_short, pcb_id)] += 1
 
 
 def analyze_csv_file(
@@ -168,7 +194,8 @@ def analyze_csv_file(
     fail_counter,
     pallet_counter,
     last_10_counter,
-    last_20_global
+    last_20_global,
+    pcb_by_pallet_counter
 ):
     with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
         file_text = f.read()
@@ -182,11 +209,12 @@ def analyze_csv_file(
                 fail_counter,
                 pallet_counter,
                 last_10_counter,
-                last_20_global
+                last_20_global,
+                pcb_by_pallet_counter
             )
         return
 
-    # Fallback, gdyby plik mial inny format i nie udalo sie znalezc rekordow po dacie
+    # Fallback, gdyby plik mial inny format
     for line in file_text.splitlines():
         line_lower = line.lower()
 
@@ -194,8 +222,11 @@ def analyze_csv_file(
             if pattern.lower() in line_lower:
                 fail_counter[label] += 1
                 pallet_counter[label]["UNKNOWN"] += 1
-                last_10_counter[label].append(("UNKNOWN_TIME", "UNKNOWN"))
-                last_20_global.append(("UNKNOWN_TIME", "UNKNOWN", label))
+                last_10_counter[label].append(("UNKNOWN_TIME", "UNKNOWN", "UNKNOWN_PCB"))
+                last_20_global.append(("UNKNOWN_TIME", "UNKNOWN", "UNKNOWN_PCB", label))
+
+                if label in (MTF_LABEL, CENTRATION_LABEL):
+                    pcb_by_pallet_counter[label][("UNKNOWN", "UNKNOWN_PCB")] += 1
 
 
 def format_pallets(counter):
@@ -223,26 +254,26 @@ def format_pallets(counter):
 def print_last_20_global(last_20_global):
     """
     Pokazuje na gorze ostatnie 20 szt. FAIL:
-    data/godzina + paletka + failure code.
+    data/godzina + paletka + PCB ID + failure code.
     """
 
     events = list(last_20_global)
 
     print("\nOSTATNIE 20 SZT. FAIL")
-    print("=" * 140)
+    print("=" * 165)
 
     if not events:
         print("Brak znalezionych FAIL.")
-        print("=" * 140)
+        print("=" * 165)
         return
 
-    print(f"{'LP':>3} | {'DATE / TIME':<25} | {'PALLET':<8} | {'FAILURE CODE':<90}")
-    print("-" * 140)
+    print(f"{'LP':>3} | {'DATE / TIME':<25} | {'PALLET':<8} | {'PCB ID':<25} | {'FAILURE CODE':<85}")
+    print("-" * 165)
 
-    for idx, (date_time, pallet_short, label) in enumerate(events, start=1):
-        print(f"{idx:>3} | {date_time:<25} | {pallet_short:<8} | {label:<90}")
+    for idx, (date_time, pallet_short, pcb_id, label) in enumerate(events, start=1):
+        print(f"{idx:>3} | {date_time:<25} | {pallet_short:<8} | {pcb_id:<25} | {label:<85}")
 
-    print("=" * 140)
+    print("=" * 165)
 
 
 def print_last_10(label, last_10_counter):
@@ -254,22 +285,69 @@ def print_last_10(label, last_10_counter):
 
     print("  LAST 10 FAILS:")
 
-    for idx, (date_time, pallet_short) in enumerate(events, start=1):
-        print(f"    {idx:>2}. {date_time} | PALLET: {pallet_short}")
+    for idx, (date_time, pallet_short, pcb_id) in enumerate(events, start=1):
+        print(f"    {idx:>2}. {date_time} | PALLET: {pallet_short} | PCB ID: {pcb_id}")
 
 
-def print_summary(fail_counter, pallet_counter, last_10_counter, last_20_global, input_files):
+def print_pcb_by_pallet_table(label, pcb_by_pallet_counter):
+    """
+    Dodatkowa tabela tylko dla:
+    - MTF Image Test error
+    - Centration Test error
+
+    Format:
+    PALLET | PCB ID | QTY
+    """
+
+    if label not in (MTF_LABEL, CENTRATION_LABEL):
+        return
+
+    counter = pcb_by_pallet_counter[label]
+
+    if not counter:
+        return
+
+    print("  PCB ID TABLE:")
+    print("  " + "-" * 100)
+    print(f"  {'PALLET':<10} | {'PCB ID':<35} | {'QTY':>6}")
+    print("  " + "-" * 100)
+
+    def sort_key(item):
+        (pallet_short, pcb_id), qty = item
+
+        if str(pallet_short).isdigit():
+            pallet_sort = int(pallet_short)
+        else:
+            pallet_sort = 999999
+
+        return (-qty, pallet_sort, pcb_id)
+
+    sorted_items = sorted(counter.items(), key=sort_key)
+
+    for (pallet_short, pcb_id), qty in sorted_items:
+        print(f"  {pallet_short:<10} | {pcb_id:<35} | {qty:>6}")
+
+    print("  " + "-" * 100)
+
+
+def print_summary(
+    fail_counter,
+    pallet_counter,
+    last_10_counter,
+    last_20_global,
+    pcb_by_pallet_counter,
+    input_files
+):
     print("\nANALIZOWANE PLIKI:")
     for file_path in input_files:
         print("-", file_path)
 
-    # NOWA SEKCJA NA GORZE
     print_last_20_global(last_20_global)
 
     print("\nWYNIK ANALIZY")
-    print("=" * 140)
-    print(f"{'FAILURE CODE':<70} | {'FAIL COUNT':>10} | {'PALLET ID / QTY':<45}")
-    print("-" * 140)
+    print("=" * 145)
+    print(f"{'FAILURE CODE':<70} | {'FAIL COUNT':>10} | {'PALLET ID / QTY':<50}")
+    print("-" * 145)
 
     total = 0
 
@@ -277,14 +355,18 @@ def print_summary(fail_counter, pallet_counter, last_10_counter, last_20_global,
         count = fail_counter[label]
         pallets_text = format_pallets(pallet_counter[label])
 
-        print(f"{label:<70} | {count:>10} | {pallets_text:<45}")
+        print(f"{label:<70} | {count:>10} | {pallets_text:<50}")
         total += count
 
         print_last_10(label, last_10_counter)
-        print("-" * 140)
+
+        # Tabela PCB ID obok numeru paletki tylko dla MTF i Centration
+        print_pcb_by_pallet_table(label, pcb_by_pallet_counter)
+
+        print("-" * 145)
 
     print(f"{'SUMA FAIL':<70} | {total:>10}")
-    print("=" * 140)
+    print("=" * 145)
 
     if total == 0:
         print("\nNie znaleziono zadnych wskazanych failure kodow.")
@@ -311,9 +393,11 @@ def main():
     fail_counter = Counter()
     pallet_counter = defaultdict(Counter)
     last_10_counter = defaultdict(lambda: deque(maxlen=10))
-
-    # NOWE: ostatnie 20 wszystkich FAIL globalnie
     last_20_global = deque(maxlen=20)
+
+    # Dla MTF i Centration:
+    # pcb_by_pallet_counter[label][(pallet_short, pcb_id)] = qty
+    pcb_by_pallet_counter = defaultdict(Counter)
 
     for file_path in csv_files:
         analyze_csv_file(
@@ -321,7 +405,8 @@ def main():
             fail_counter,
             pallet_counter,
             last_10_counter,
-            last_20_global
+            last_20_global,
+            pcb_by_pallet_counter
         )
 
     print_summary(
@@ -329,6 +414,7 @@ def main():
         pallet_counter,
         last_10_counter,
         last_20_global,
+        pcb_by_pallet_counter,
         csv_files
     )
 
