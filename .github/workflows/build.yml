@@ -3,6 +3,7 @@ name: Build Windows EXE
 on:
   push:
     branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -10,15 +11,20 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.8'
 
       - name: Install PyInstaller
-        run: pip install pyinstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller==4.10
+
+      - name: Check syntax
+        run: python -m py_compile fail_counter.py
 
       - name: Build EXE
         run: pyinstaller --onefile --console fail_counter.py
