@@ -220,20 +220,20 @@ def print_last_20_global(last_20_global):
     events = list(last_20_global)
 
     print("\nOSTATNIE 20 SZT. FAIL")
-    print("=" * 140)
+    print("=" * 80)
 
     if not events:
         print("Brak znalezionych FAIL.")
-        print("=" * 140)
+        print("=" * 80)
         return
 
-    print(f"{'LP':>3} | {'DATE / TIME':<25} | {'PALLET':<8} | {'FAILURE CODE':<90}")
-    print("-" * 140)
-
     for idx, (date_time, pallet_short, label) in enumerate(events, start=1):
-        print(f"{idx:>3} | {date_time:<25} | {pallet_short:<8} | {label:<90}")
+        print(f"{idx:>2}. {date_time}")
+        print(f"    PALLET : {pallet_short}")
+        print(f"    FAIL   : {label}")
+        print("-" * 80)
 
-    print("=" * 140)
+    print("=" * 80)
 
 
 def print_last_10(label, last_10_counter):
@@ -246,7 +246,8 @@ def print_last_10(label, last_10_counter):
     print("  LAST 10 FAILS:")
 
     for idx, (date_time, pallet_short) in enumerate(events, start=1):
-        print(f"    {idx:>2}. {date_time} | PALLET: {pallet_short}")
+        print(f"    {idx:>2}. {date_time}")
+        print(f"        PALLET: {pallet_short}")
 
 
 def print_pcb_by_pallet_table(label, pcb_by_pallet_counter):
